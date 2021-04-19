@@ -21,7 +21,7 @@ for the GitHub repository using the *Secrets* section of the *Settings* page:
 
 
 It is also possible to do a step-by-step deployment issuing the CDK commands locally, as described in 
-[notes.txt](https://github.com/xtralab/cdk-python-maw/blob/main/notes.txt). 
+[notes.txt](https://github.com/roebius/cdk-python-maw/blob/main/notes.txt). 
 
 
 **NOTES**
