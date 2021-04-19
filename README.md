@@ -36,7 +36,8 @@ It is also possible to do a step-by-step deployment issuing the CDK commands loc
   a `cicd_stack.py` file is provided as an example (currently not working). 
 
 
-- Please check `notes.txt` for details about this project before using it.
+- Please check [notes.txt](https://github.com/roebius/cdk-python-maw/blob/main/notes.txt) for details about this 
+  project before using it.
 
 
 **MAIN DIFFERENCES FROM THE ORIGINAL WORKSHOP**

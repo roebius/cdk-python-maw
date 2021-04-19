@@ -40,8 +40,8 @@ If instead of running the GitHub workflow you want to do the deployment manually
 you should have both AWS CLI and AWS CDK already installed, with the AWS CLI configured for the desired user.
 
 
-MANUAL INSTALLATION
-===================
+MANUAL DEPLOYMENT
+=================
 
 Make sure an environment variable AWS_REGION is defined with the choosen deployment region.
 
@@ -58,7 +58,7 @@ pip install -r requirements.txt
 DEPLOY THE SOLUTION (option A)
 ------------------------------
 a. create/update the docker container as described at the bottom, based on module-2 in the original project,
-but DO NOT PUSH IT TO ECR YET - SEE "DOCKER APP TO BE DEPLOYED TO ECR" AT THE BOTTOM
+but DO NOT PUSH IT TO ECR YET - SEE THE DOCKER COMMANDS AT THE BOTTOM
 
 b. deploy the DynamoDB table (initially it will be empty), the network and the ECR stacks.
 cd cdk-python-maw/webgen
@@ -110,7 +110,7 @@ cdk deploy MythicalMysfits-ECR-stack --require-approval never
 
 2. push the docker container to the ECR repository
 docker push <account_id>.dkr.ecr.<aws_region>.amazonaws.com/mythicalmysfits/service:latest
-(SEE "DOCKER APP TO BE DEPLOYED TO ECR" AT THE BOTTOM)
+(SEE THE DOCKER COMMANDS AT THE BOTTOM)
 
 3. steps b. c. d. in option A can be replaced by the following:
 cdk deploy MythicalMysfits-DynamoDB-stack MythicalMysfits-Network-ECR-ECS-stack MythicalMysfits-Cognito-stack MythicalMysfits-APIGateway-stack --require-approval never
