@@ -1,0 +1,146 @@
+Preliminary note regarding the deployment of the project
+========================================================
+Before trying to deploy the project, make sure your AWS account has the Service Linked Role for ECS.
+If the Service Linked Role for ECS is not available for the account, create one with the AWS CLI command:
+aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com
+
+The project can be deployed by enabling the CICD workflow on the GitHub Actions section,
+based on 'deploy.yml' in .gihub/workflows.
+If the workflow is already enabled, it will automatically run each time a push of
+the 'main' branch to GitHub is performed.
+Before running the workflow, in the 'Secrets' section of the project 'Settings' page the following secrets
+must be configured:
+  AWS_ACCESS_KEY_ID       (access key of the AWS user used to work with the AWS resources)
+  AWS_SECRET_ACCESS_KEY   (secret access key associated to the user)
+  AWS_REGION              (the desired AWS region)
+  AWS_ID                  (the AWS account id)
+  RECEIVER_EMAIL          (the email that will receive the messages from the visitors of the web site)
+
+Note that the user should have permissions to access all the required AWS resources, in partucular:
+- AWS IAM
+- Amazon S3
+- AWS CloudFront
+- AWS Lambda
+- Amazon EC2
+- Amazon VPC
+- Amazon API Gateway
+- Amazon ECR
+- Amazon ECS
+- Amazon DynamoDB
+- AWS Kinesis
+- Amazon Cognito
+- Amazon SageMaker
+- AWS CloudFormation
+
+The WORKFLOW has a sequence of steps that replicates the manual deployment steps.
+It also includes initial environment setup steps, and some flow control steps
+to avoid re-building components that do not need to.
+
+If instead of running the GitHub workflow you want to do the deployment manually from a terminal,
+you should have both AWS CLI and AWS CDK already installed, with the AWS CLI configured for the desired user.
+
+
+MANUAL INSTALLATION
+===================
+
+Make sure an environment variable AWS_REGION is defined with the choosen deployment region.
+
+CDK environment preparation
+---------------------------
+cd cdk-python-maw
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+# in setup.py check/set the aws-cdk core version you are using, then:
+pip install -r requirements.txt
+
+
+DEPLOY THE SOLUTION (option A)
+------------------------------
+a. create/update the docker container as described at the bottom, based on module-2 in the original project,
+but DO NOT PUSH IT TO ECR YET - SEE "DOCKER APP TO BE DEPLOYED TO ECR" AT THE BOTTOM
+
+b. deploy the DynamoDB table (initially it will be empty), the network and the ECR stacks.
+cd cdk-python-maw/webgen
+cdk deploy MythicalMysfits-DynamoDB-stack MythicalMysfits-Network-stack MythicalMysfits-ECR-stack --require-approval never
+
+c. push the already locally prepared docker container to the ECR
+docker push <account_id>.dkr.ecr.<aws_region>.amazonaws.com/mythicalmysfits/service:latest
+
+d. complete the deployment of the Fargate service (as an add-on funcionality this will also populate the table - check the app folder files), the Cognito and the APIGateway:
+cdk deploy MythicalMysfits-ECS-stack MythicalMysfits-Cognito-stack MythicalMysfits-APIGateway-stack --require-approval never
+
+e. (optional) update the mysfitsApi endpoint in webgen/MythicalMysfits-KinesisFirehose_stack.py and deploy MythicalMysfits-KinesisFirehose-stack
+(get the endpoint from the APIGateway console, in the API settings)
+cdk deploy MythicalMysfits-KinesisFirehose-stack --require-approval never
+
+f. (optional) update the receiver_email email address in webgen/MythicalMysfits-XRay_stack.py and deploy MythicalMysfits-XRay-stack
+cdk deploy MythicalMysfits-XRay-stack --require-approval never
+
+g.(optional) deploy MythicalMysfits-SageMaker-stack
+cdk deploy MythicalMysfits-SageMaker-stack --require-approval never
+- then from the SageMaker console launch the notebook when ready
+- upload the project notebook mysfit_recommendations_knn.ipynb from the sagemaker folder
+- run the notebook and check when the inference endpoint is ready
+- get the inference endpoint EndpointName value from the console or using the command:
+aws sagemaker list-endpoints
+- paste the value in corresponding variable assignment in lambda_recommendations/service/recommendations.py
+- re-deploy the stack so that the lambda can be updated with the inference endpoint name
+cdk deploy MythicalMysfits-SageMaker-stack --require-approval never
+- Note: to run experiments with the notebook locally the dataset can be downloaded with the following commands:
+wget "https://s3.amazonaws.com/mysfit-recommendation-training-data/mysfit-preferences.csv.gz"
+mkdir -p tmp/mysfit/raw
+mv mysfit-preferences.csv.gz tmp/mysfit/raw/mysfit-preferences.csv.gz
+
+h. update the region and the MysfitsApi endpoint in web/index.html, and the cognito info in web/index.html, web/confirm.html, web/register.html
+(optional: update the ClickProcessingApi endpoint obtained from MythicalMysfits-KinesisFirehose-stack in web/index.html)
+(optional: update the QuestionsApi endpoint obtained from MythicalMysfits-XRay-stack in web/index.html)
+(optional: update the RecommendationsApi endpoint obtained from MythicalMysfits-SageMaker-stack in web/index.html)
+
+i. deploy the web site
+- in app.py uncomment only the website stack deployment statement you want to use (there are 2 alternative options), then:
+cdk deploy MythicalMysfits-Website-stack --require-approval never
+
+
+DEPLOY THE SOLUTION (option B)
+------------------------------
+1. create the empty ECR repository
+cd cdk-python-maw/webgen
+cdk deploy MythicalMysfits-ECR-stack --require-approval never
+
+2. push the docker container to the ECR repository
+docker push <account_id>.dkr.ecr.<aws_region>.amazonaws.com/mythicalmysfits/service:latest
+(SEE "DOCKER APP TO BE DEPLOYED TO ECR" AT THE BOTTOM)
+
+3. steps b. c. d. in option A can be replaced by the following:
+cdk deploy MythicalMysfits-DynamoDB-stack MythicalMysfits-Network-ECR-ECS-stack MythicalMysfits-Cognito-stack MythicalMysfits-APIGateway-stack --require-approval never
+(contrary to the deployment option A, if the ECR repository already exists and includes the container no error occurs in this case)
+
+The remaining steps are the same as option A from step e. on
+
+
+DESTROY THE SOLUTION
+--------------------
+# destroy the stacks
+cdk destroy --all --force
+
+Note that some resources are not automatically deleted by cdk destroy:
+- the Dynamodb table is not automatically deleted
+- the S3 web buckets are not automatically deleted
+- the Sagemaker notebook, if not already deleted using the console, should be automatically deleted by the stack "cdk destroy"
+- the inference endpoint, endpoint configuration and model must be removed manually
+- the CloudWatch logs must be manually removed
+- double check if there are still any NAT's or endpoints that need to be manually deleted, in order to avoid undesired charges
+
+# delete the resources that are not automatically destroyed (beware that also all buckets with prefix 'sagemaker'
+# and all models whose name includes 'knn' will be deleted! Check clean_utils.py before running it)
+python utils/clean_utils.py
+
+
+COMMAND LINE COMMANDS TO BUILD AND DEPLOY THE DOCKER APP TO ECR
+===============================================================
+cd cdk-python-maw/webgen/app
+aws ecr get-login-password --region <aws_region> | docker login --username AWS --password-stdin <account_id>.dkr.ecr.<aws_region>.amazonaws.com
+docker build -t mythicalmysfits/service:latest .
+docker tag mythicalmysfits/service:latest <account_id>.dkr.ecr.<aws_region>.amazonaws.com/mythicalmysfits/service:latest
+docker push <account_id>.dkr.ecr.<aws_region>.amazonaws.com/mythicalmysfits/service:latest

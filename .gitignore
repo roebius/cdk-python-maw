@@ -1,0 +1,21 @@
+.idea
+
+# Python
+__pycache__
+.pytest_cache
+.venv
+*.egg-info
+
+# Node.js
+node_modules
+
+# CDK
+.cdk.staging
+cdk.out
+
+# Additional folders and files
+tmp
+*.zip
+*.gz
+*.tar
+notes_local.txt

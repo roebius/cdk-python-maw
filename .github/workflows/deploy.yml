@@ -1,0 +1,169 @@
+name: CICD
+
+on:
+  push:
+     branches: [ main ]
+
+jobs:
+
+  deploy:
+    runs-on: ubuntu-latest
+    # Uncomment the following to use a repository environment (choose a name)
+    # If using a repo environment the secrets must be created for the environment
+    #environment:
+    #  name: RUNNER_ENV
+    #  url: https://github.com
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+      RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            app_changed:
+              - 'webgen/app/**'
+            endpoint_changed:
+              - 'webgen/sagemaker/**'
+
+      - name: Install Node.js 14.x
+        uses: actions/setup-node@v1
+        with:
+          node-version: '14.x'
+          
+      - name: Install AWS CLI v2
+        run: |
+          sudo apt install curl
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.0.30.zip" -o "awscliv2.zip"
+          sudo apt install -y unzip
+          unzip awscliv2.zip
+          sudo ./aws/install --update
+          
+      - name: Configure AWS CLI
+        run: |
+          aws configure set aws_access_key_id ${{ env.AWS_ACCESS_KEY_ID }}
+          aws configure set aws_secret_access_key ${{ env.AWS_SECRET_ACCESS_KEY }}
+          
+      - name: Install AWS CDK
+        run: |
+          npm install -g aws-cdk@1.96.0
+
+      - name: Install Python 3
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+          architecture: 'x64'
+          
+      - name: Display Python version
+        run: |
+          python -c "import sys; print(sys.version)"
+          
+      - name: Upgrade pip
+        run: |
+          python -m pip install --upgrade pip
+        
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          
+      - name: Bootstrap the CDK (can be commented out after the first execution of this script or if the AWS account already bootstrapped the CDK)
+        run: |
+          cd webgen
+          cdk bootstrap aws://${{ secrets.AWS_ID }}/${{ env.AWS_DEFAULT_REGION }}
+          
+      - name: Deploy MythicalMysfits-DynamoDB
+        run: |
+          cd webgen
+          cdk deploy MythicalMysfits-DynamoDB-stack --require-approval never
+
+      - name: Deploy MythicalMysfits-Network
+        run: |
+          cd webgen
+          cdk deploy MythicalMysfits-Network-stack --require-approval never
+
+      - name: Deploy MythicalMysfits-ECR
+        run: |
+          cd webgen
+          cdk deploy MythicalMysfits-ECR-stack --require-approval never
+
+      - name: Check if the ECR repository is empty or not, as a condition used in the next step
+        id: test_ecr_empty
+        run: |
+          cd webgen/utils
+          output=$(python test_ecr_empty.py)
+          echo "::set-output name=status::$output"
+
+      - name: Prepare and push the mythicalmysfits/service Docker container image if to be renewed or not existing
+        if: steps.filter.outputs.app_changed == 'true' || steps.test_ecr_empty.outputs.status == 'true'
+        run: |
+          cd webgen/app
+          aws ecr get-login-password --region ${{ env.AWS_DEFAULT_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ID }}.dkr.ecr.${{ env.AWS_DEFAULT_REGION }}.amazonaws.com
+          docker build -t mythicalmysfits/service:latest .
+          docker tag mythicalmysfits/service:latest ${{ secrets.AWS_ID }}.dkr.ecr.${{ env.AWS_DEFAULT_REGION }}.amazonaws.com/mythicalmysfits/service:latest
+          docker push ${{ secrets.AWS_ID }}.dkr.ecr.${{ env.AWS_DEFAULT_REGION }}.amazonaws.com/mythicalmysfits/service:latest
+
+      - name: Deploy MythicalMysfits-ECS
+        run: |
+          cd webgen
+          cdk deploy MythicalMysfits-ECS-stack --require-approval never
+
+      - name: Update MythicalMysfits-FargateService only if there is a new version of the mythicalmysfits/service Docker image
+        if: steps.filter.outputs.app_changed == 'true' && steps.test_ecr_empty.outputs.status == 'false'
+        run: |
+          cd webgen/utils
+          python deploy_ecs_service.py
+
+      - name: Deploy MythicalMysfits-Cognito
+        run: |
+          cd webgen
+          cdk deploy MythicalMysfits-Cognito-stack --require-approval never
+
+      - name: Deploy MythicalMysfits-APIGateway
+        run: |
+          cd webgen
+          cdk deploy MythicalMysfits-APIGateway-stack --require-approval never
+
+      - name: Deploy MythicalMysfits-KinesisFirehose-stack
+        run: |
+          cd webgen
+          python utils/prepare_files.py "replace_clickprocessingapi_endpoint"
+          cdk deploy MythicalMysfits-KinesisFirehose-stack --require-approval never
+
+      - name: Deploy MythicalMysfits-XRay-stack
+        run: |
+          cd webgen
+          python utils/prepare_files.py "replace_email"
+          cdk deploy MythicalMysfits-XRay-stack --require-approval never
+
+      - name: Check if there is already a SageMaker inference endpoint or not, as a condition used in the next step
+        id: test_no_inference_endpoint
+        run: |
+          cd webgen/utils
+          output=$(python test_no_inference_endpoint.py)
+          echo "::set-output name=status::$output"
+
+      - name: Prepare a new inference endpoint if it needs to be renewed or if not already existing
+        if: steps.filter.outputs.endpoint_changed == 'true' || steps.test_no_inference_endpoint.outputs.status == 'true'
+        run: |
+          cd webgen
+          wget "https://s3.amazonaws.com/mysfit-recommendation-training-data/mysfit-preferences.csv.gz"
+          mkdir -p tmp/mysfit/raw
+          mv mysfit-preferences.csv.gz tmp/mysfit/raw/mysfit-preferences.csv.gz
+          python sagemaker/mysfit_recommendations_knn.py
+
+      - name: Deploy MythicalMysfits-SageMaker-stack
+        run: |
+          cd webgen
+          python utils/prepare_files.py "replace_recommendationsapi_endpoint"
+          cdk deploy MythicalMysfits-SageMaker-stack --require-approval never
+
+      - name: Prepare the web site files and deploy MythicalMysfits-Website (expand this step when complete to get the website URL!)
+        run: |
+          cd webgen
+          python utils/prepare_files.py "replace_web_endpoints_and_cognito_ids"
+          cdk deploy MythicalMysfits-Website-stack --require-approval never
