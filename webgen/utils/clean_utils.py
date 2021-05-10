@@ -150,7 +150,7 @@ def list_nat_gateways(deployment_regions):
     nat_gateways = []
 
     for current_region in deployment_regions:
-        print(f'\nRegion{current_region}:')
+        print(f'\nRegion {current_region}:')
         ec2_client = boto3.client('ec2', region_name=current_region)
         response = ec2_client.describe_nat_gateways(
             DryRun=False,
