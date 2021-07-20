@@ -7,7 +7,7 @@ on:
 jobs:
 
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     # Uncomment the following to use a repository environment (choose a name)
     # If using a repo environment the secrets must be created for the environment
     #environment:
